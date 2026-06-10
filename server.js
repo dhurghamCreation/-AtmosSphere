@@ -14,8 +14,8 @@ const MIME_TYPES = {
     ".ico": "image/x-icon",
 };
 
-const server = http.createServer((req, res) => {
-    // FIXED LINE: Added /public to point to your files
+// Core logic function shared between local and production
+const requestHandler = (req, res) => {
     let filePath = "./public" + (req.url === "/" ? "/index.html" : req.url);
     const ext = path.extname(filePath);
 
@@ -36,9 +36,16 @@ const server = http.createServer((req, res) => {
             res.end(content);
         }
     });
-});
+};
 
-server.listen(PORT, () => {
-    console.log(`🌤️ AtmosSphere running at http://localhost:${PORT}`);
-    console.log(`📡 Press Ctrl+C to stop`);
-});
+// Make it work on Vercel's Serverless environment
+module.exports = requestHandler;
+
+// Keep it working on your local machine
+if (require.main === module) {
+    const server = http.createServer(requestHandler);
+    server.listen(PORT, () => {
+        console.log(`🌤️ AtmosSphere running at http://localhost:${PORT}`);
+        console.log(`📡 Press Ctrl+C to stop`);
+    });
+}
