@@ -1,0 +1,1203 @@
+<!DOCTYPE html>
+<html lang="en" id="html-tag">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AtmosSphere — Advanced Weather Intelligence</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        html { scroll-behavior: smooth; }
+        #map { height: 320px; border-radius: 18px; margin-top: 10px; z-index: 1; }
+        .leaflet-container { border-radius: 18px; background: #0a0e1a !important; }
+        
+        canvas#weather-canvas {
+            position: fixed; top: 0; left: 0;
+            width: 100vw; height: 100vh;
+            z-index: -1; pointer-events: none;
+        }
+
+        .toast {
+            position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+            background: rgba(0,0,0,0.85); backdrop-filter: blur(14px);
+            color: white; padding: 14px 28px; border-radius: 16px;
+            font-size: 0.9rem; z-index: 9999;
+            opacity: 0; transition: opacity 0.5s;
+            pointer-events: none; text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+        }
+        .toast.show { opacity: 1; }
+
+        .map-layer-controls {
+            display: flex; gap: 6px; margin: 10px 0; flex-wrap: wrap;
+        }
+        .map-layer-btn {
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.1);
+            color: rgba(255,255,255,0.7);
+            padding: 6px 14px; border-radius: 20px;
+            font-size: 0.75rem; cursor: pointer;
+            transition: all 0.2s; font-family: inherit;
+        }
+        .map-layer-btn:hover {
+            background: rgba(255,255,255,0.15); color: #fff;
+        }
+        .map-layer-btn.active {
+            background: rgba(96,165,250,0.3); border-color: #60a5fa; color: #fff;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .loading-spinner {
+            display: inline-block;
+            width: 20px; height: 20px;
+            border: 2px solid rgba(255,255,255,0.1);
+            border-top-color: #60a5fa;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            vertical-align: middle;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="weather-canvas"></canvas>
+    <div class="toast" id="toast"></div>
+
+    <div class="app-wrapper">
+        <!-- ====== SIDEBAR ====== -->
+        <aside class="glass-sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <span class="app-logo">🌤️</span>
+                <h2 id="site-title">AtmosSphere</h2>
+            </div>
+            <nav class="sidebar-nav" id="sidebar-nav">
+                <a class="nav-item active" data-section="main" data-i18n="navNow"><i data-lucide="sun"></i> <span>Now</span></a>
+                <a class="nav-item" data-section="hourly" data-i18n="navHourly"><i data-lucide="clock"></i> <span>Hourly</span></a>
+                <a class="nav-item" data-section="weekly" data-i18n="navWeekly"><i data-lucide="calendar"></i> <span>7 Days</span></a>
+                <a class="nav-item" data-section="air" data-i18n="navAir"><i data-lucide="wind"></i> <span>Air Quality</span></a>
+                <a class="nav-item" data-section="activities" data-i18n="navActivities"><i data-lucide="footprints"></i> <span>Activities</span></a>
+                <a class="nav-item" data-section="map" data-i18n="navMap"><i data-lucide="map"></i> <span>Map</span></a>
+                <a class="nav-item" data-section="details" data-i18n="navDetails"><i data-lucide="list"></i> <span>Details</span></a>
+                <a class="nav-item" data-section="alerts" data-i18n="navAlerts"><i data-lucide="alert-triangle"></i> <span>Alerts</span></a>
+                <a class="nav-item" data-section="marine" data-i18n="navMarine"><i data-lucide="waves"></i> <span>Marine</span></a>
+            </nav>
+            <div class="sidebar-lang">
+                <i data-lucide="globe"></i>
+                <select id="lang-select">
+                    <option value="en">English</option>
+                    <option value="fr">Français</option>
+                    <option value="es">Español</option>
+                    <option value="de">Deutsch</option>
+                    <option value="it">Italiano</option>
+                    <option value="pt">Português</option>
+                    <option value="ar">العربية</option>
+                    <option value="ja">日本語</option>
+                    <option value="zh">中文</option>
+                    <option value="ru">Русский</option>
+                    <option value="hi">हिन्दी</option>
+                </select>
+            </div>
+        </aside>
+
+        <!-- ====== MAIN CONTENT ====== -->
+        <main class="main-content" id="main-content">
+            <div class="top-bar">
+                <button class="hamburger" id="hamburger"><i data-lucide="menu"></i></button>
+                <div class="search-wrapper">
+                    
+                    <input type="text" id="city-input" data-i18n-placeholder="search" placeholder="Search city..." autocomplete="off">
+                    <button id="geo-btn" data-i18n-title="useLocation" title="Use my location"><i data-lucide="map-pin"></i></button>
+                </div>
+                <div class="unit-toggle">
+                    <button class="unit-btn active" data-unit="metric">°C</button>
+                    <button class="unit-btn" data-unit="imperial">°F</button>
+                </div>
+            </div>
+
+            <!-- Section: -->
+            <section id="sec-main" class="section active">
+                <div class="weather-hero">
+                    <div class="hero-left">
+                        <div class="location-tag">
+                            <i data-lucide="map-pin"></i>
+                            <span id="city-name" data-i18n="planetEarth">Planet Earth</span>
+                        </div>
+                        <div class="main-temp-box">
+                            <img id="weather-icon" src="https://openweathermap.org/img/wn/01d@4x.png" alt="">
+                            <span class="big-temp" id="temp">--°</span>
+                        </div>
+                        <p class="weather-desc" id="description">—</p>
+                        <p class="feels-like" id="feels-like" data-i18n-prefix="feelsLike">Feels like --°</p>
+                    </div>
+                    <div class="hero-right">
+                        <div class="hero-stat">
+                            <i data-lucide="droplets"></i>
+                            <div><span class="stat-val" id="humidity">--%</span><span class="stat-lbl" data-i18n="humidity">Humidity</span></div>
+                        </div>
+                        <div class="hero-stat">
+                            <i data-lucide="wind"></i>
+                            <div><span class="stat-val" id="wind-speed">-- km/h</span><span class="stat-lbl" data-i18n="wind">Wind</span></div>
+                        </div>
+                        <div class="hero-stat">
+                            <i data-lucide="sun"></i>
+                            <div><span class="stat-val" id="uv-index">--</span><span class="stat-lbl" data-i18n="uv">UV Index</span></div>
+                        </div>
+                        <div class="hero-stat">
+                            <i data-lucide="gauge"></i>
+                            <div><span class="stat-val" id="pressure-hero">-- hPa</span><span class="stat-lbl" data-i18n="pressure">Pressure</span></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="astro-row">
+                    <div class="astro-card">
+                        <i data-lucide="sunrise"></i>
+                        <span id="sunrise">--:--</span>
+                        <small data-i18n="sunrise">Sunrise</small>
+                    </div>
+                    <div class="astro-card">
+                        <i data-lucide="sunset"></i>
+                        <span id="sunset">--:--</span>
+                        <small data-i18n="sunset">Sunset</small>
+                    </div>
+                    <div class="astro-card">
+                        <i data-lucide="moon"></i>
+                        <span id="moon-phase">--</span>
+                        <small data-i18n="moon">Moon</small>
+                    </div>
+                    <div class="astro-card">
+                        <i data-lucide="eye"></i>
+                        <span id="visibility-hero">-- km</span>
+                        <small data-i18n="visibility">Visibility</small>
+                    </div>
+                </div>
+                <!-- Extra info row -->
+                <div class="extra-info-row" id="extra-info-row">
+                    <span data-i18n="dewPoint">Dew Point:</span> <span id="dew-point">--°</span>
+                    <span class="sep">|</span>
+                    <span data-i18n="clouds">Clouds:</span> <span id="clouds-pct">--%</span>
+                    <span class="sep">|</span>
+                    <span data-i18n="precip">Precip:</span> <span id="precip-chance">--%</span>
+                    <span class="sep">|</span>
+                    <span data-i18n="gust">Gust:</span> <span id="gust-speed">--</span>
+                </div>
+            </section>
+
+            <!-- Section: HOURLY -->
+            <section id="sec-hourly" class="section">
+                <h2 class="section-title"><i data-lucide="clock"></i> <span data-i18n="hourly">Hourly Forecast</span></h2>
+                <div class="hourly-scroll" id="hourly-container"></div>
+                <div class="hourly-chart-wrap">
+                    <canvas id="hourly-chart" width="700" height="160"></canvas>
+                </div>
+            </section>
+
+            <!-- Section: WEEKLY -->
+            <section id="sec-weekly" class="section">
+                <h2 class="section-title"><i data-lucide="calendar"></i> <span data-i18n="weekly">7-Day Forecast</span></h2>
+                <div class="weekly-grid" id="weekly-container"></div>
+            </section>
+
+            <!-- Section: AIR QUALITY -->
+            <section id="sec-air" class="section">
+                <h2 class="section-title"><i data-lucide="wind"></i> <span data-i18n="air">Air Quality & Pollution</span></h2>
+                <div id="air-content">
+                    <div class="air-main-card">
+                        <div class="aqi-circle" id="aqi-circle">
+                            <span id="aqi-value">--</span>
+                            <small data-i18n="aqi">AQI</small>
+                        </div>
+                        <div class="aqi-info">
+                            <h3 id="aqi-level" data-i18n="loading">Loading...</h3>
+                            <p id="aqi-desc">—</p>
+                        </div>
+                    </div>
+                    <div class="pollutants-grid">
+                        <div class="pollutant-card"><span>PM2.5</span><strong id="pm25">--</strong></div>
+                        <div class="pollutant-card"><span>PM10</span><strong id="pm10">--</strong></div>
+                        <div class="pollutant-card"><span>NO₂</span><strong id="no2">--</strong></div>
+                        <div class="pollutant-card"><span>SO₂</span><strong id="so2">--</strong></div>
+                        <div class="pollutant-card"><span>O₃</span><strong id="o3">--</strong></div>
+                        <div class="pollutant-card"><span>CO</span><strong id="co">--</strong></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Section: ACTIVITIES -->
+            <section id="sec-activities" class="section">
+                <h2 class="section-title"><i data-lucide="footprints"></i> <span data-i18n="activities">Outdoor Activity Guide</span></h2>
+                <div class="activity-grid" id="activity-container"></div>
+                <div class="hike-photo-box" id="hike-photo-box">
+                    <img id="hike-photo" src="" alt="">
+                    <div class="hike-photo-caption" id="hike-caption"></div>
+                </div>
+            </section>
+
+            <!-- Section: MAP -->
+            <section id="sec-map" class="section">
+                <h2 class="section-title"><i data-lucide="map"></i> <span data-i18n="map">Weather Map</span></h2>
+                <div class="map-layer-controls" id="map-layer-controls">
+                    <button class="map-layer-btn active" data-layer="temp" data-i18n="mapTemp"> Temperature</button>
+                    <button class="map-layer-btn" data-layer="clouds" data-i18n="mapClouds"> Clouds</button>
+                    <button class="map-layer-btn" data-layer="precip" data-i18n="mapPrecip"> Precipitation</button>
+                    <button class="map-layer-btn" data-layer="pressure" data-i18n="mapPressure"> Pressure</button>
+                    <button class="map-layer-btn" data-layer="wind" data-i18n="mapWind"> Wind</button>
+                </div>
+                <div id="map"></div>
+                <div class="map-overlay-info" id="map-coords"></div>
+                <div class="map-legend" id="map-legend">
+                    <span id="map-legend-label" data-i18n="mapTempLegend"> Cold —  Hot</span>
+                </div>
+            </section>
+
+            <!-- Section: DETAILS -->
+            <section id="sec-details" class="section">
+                <h2 class="section-title"><i data-lucide="list"></i> <span data-i18n="details">All Weather Data</span></h2>
+                <div class="details-grid-full" id="details-grid"></div>
+            </section>
+
+            <!-- Section: ALERTS -->
+            <section id="sec-alerts" class="section">
+                <h2 class="section-title"><i data-lucide="alert-triangle"></i> <span data-i18n="navAlerts">Weather Alerts</span></h2>
+                <div id="alerts-container">
+                    <div class="alert-empty" data-i18n="noAlerts">No active weather alerts for this area. ✅</div>
+                </div>
+                <div class="weather-tips" id="weather-tips">
+                    <h3 data-i18n="tips"> Weather Tips</h3>
+                    <ul id="tips-list"></ul>
+                </div>
+            </section>
+
+            <!-- Section: MARINE -->
+            <section id="sec-marine" class="section">
+                <h2 class="section-title"><i data-lucide="waves"></i> <span data-i18n="navMarine">Marine Conditions</span></h2>
+                <div class="marine-grid" id="marine-grid">
+                    <div class="marine-card">
+                        <i data-lucide="wind"></i>
+                        <span data-i18n="windSpeed">Wind Speed</span>
+                        <strong id="marine-wind">--</strong>
+                    </div>
+                    <div class="marine-card">
+                        <i data-lucide="gauge"></i>
+                        <span data-i18n="pressure">Pressure</span>
+                        <strong id="marine-pressure">-- hPa</strong>
+                    </div>
+                    <div class="marine-card">
+                        <i data-lucide="eye"></i>
+                        <span data-i18n="visibility">Visibility</span>
+                        <strong id="marine-visibility">-- km</strong>
+                    </div>
+                    <div class="marine-card">
+                        <i data-lucide="droplets"></i>
+                        <span data-i18n="humidity">Humidity</span>
+                        <strong id="marine-humidity">--%</strong>
+                    </div>
+                </div>
+                <p class="marine-note" data-i18n="marineNote"> Marine conditions based on current weather data.</p>
+            </section>
+        </main>
+    </div>
+
+<script>
+// ===== COMPLETE MULTI-LANGUAGE TRANSLATIONS =====
+const T = {
+    en: {
+        search:'Search city...', feelsLike:'Feels like', humidity:'Humidity', wind:'Wind', uv:'UV Index',
+        pressure:'Pressure', sunrise:'Sunrise', sunset:'Sunset', moon:'Moon', visibility:'Visibility',
+        hourly:'Hourly Forecast', weekly:'7-Day Forecast', air:'Air Quality & Pollution', aqi:'AQI',
+        activities:'Outdoor Activity Guide', hiking:'Hiking', photography:'Photography', running:'Running',
+        cycling:'Cycling', swimming:'Swimming', yoga:'Yoga', fishing:'Fishing', picnic:'Picnic',
+        go:'Great!', avoid:'Avoid', moderate:'Okay', map:'Weather Map', details:'All Weather Data',
+        dewPoint:'Dew Point', clouds:'Clouds', precip:'Precipitation', gust:'Gusts', dir:'Wind Direction',
+        noData:'No data', loading:'Loading...', planetEarth:'Planet Earth',
+        useLocation:'Use my location',
+        navNow:'Now', navHourly:'Hourly', navWeekly:'7 Days', navAir:'Air Quality', navActivities:'Activities',
+        navMap:'Map', navDetails:'Details', navAlerts:'Alerts', navMarine:'Marine',
+        mapTemp:' Temperature', mapClouds:' Clouds', mapPrecip:' Precipitation',
+        mapPressure:' Pressure', mapWind:' Wind', mapTempLegend:' Cold —  Hot',
+        mapCloudsLegend:' Clear — Cloudy', mapPrecipLegend:' Dry —  Wet',
+        mapPressureLegend:' Low — High', mapWindLegend:' Calm — Stormy',
+        feelTemp:'Feels like', country:'Country', coordinates:'Coordinates',
+        noAlerts:'No active weather alerts for this area.', tips:' Weather Tips',
+        windSpeed:'Wind Speed', marineNote:' Marine conditions based on current weather data.',
+        conditions:'Conditions', highLow:'High/Low',
+        sunriseTime:'Sunrise', sunsetTime:'Sunset',
+    },
+    fr: {
+        search:'Chercher une ville...', feelsLike:'Ressenti', humidity:'Humidité', wind:'Vent', uv:'Indice UV',
+        pressure:'Pression', sunrise:'Lever', sunset:'Coucher', moon:'Lune', visibility:'Visibilité',
+        hourly:'Prévisions horaires', weekly:'Prévisions 7 jours', air:'Qualité de l\'air', aqi:'IQA',
+        activities:'Guide d\'activités', hiking:'Randonnée', photography:'Photo', running:'Course',
+        cycling:'Vélo', swimming:'Natation', yoga:'Yoga', fishing:'Pêche', picnic:'Pique-nique',
+        go:'Parfait!', avoid:'Évitez', moderate:'Moyen', map:'Carte météo', details:'Toutes les données',
+        dewPoint:'Point de rosée', clouds:'Nuages', precip:'Précipitations', gust:'Rafales', dir:'Direction du vent',
+        noData:'Aucune donnée', loading:'Chargement...', planetEarth:'Planète Terre',
+        useLocation:'Utiliser ma position',
+        navNow:'Maintenant', navHourly:'Horaire', navWeekly:'7 Jours', navAir:'Qualité air', navActivities:'Activités',
+        navMap:'Carte', navDetails:'Détails', navAlerts:'Alertes', navMarine:'Marin',
+        mapTemp:' Température', mapClouds:' Nuages', mapPrecip:' Précipitations',
+        mapPressure:' Pression', mapWind:' Vent', mapTempLegend:' Froid —  Chaud',
+        mapCloudsLegend:' Clair — Nuageux', mapPrecipLegend:' Sec —  Humide',
+        mapPressureLegend:' Basse — Haute', mapWindLegend:' Calme — Tempête',
+        feelTemp:'Ressenti', country:'Pays', coordinates:'Coordonnées',
+        noAlerts:'Aucune alerte météo active.', tips:' Conseils météo',
+        windSpeed:'Vitesse vent', marineNote:' Conditions marines basées sur les données actuelles.',
+        conditions:'Conditions', highLow:'Max/Min',
+        sunriseTime:'Lever', sunsetTime:'Coucher',
+    },
+    es: {
+        search:'Buscar ciudad...', feelsLike:'Sensación', humidity:'Humedad', wind:'Viento', uv:'Índice UV',
+        pressure:'Presión', sunrise:'Amanecer', sunset:'Atardecer', moon:'Luna', visibility:'Visibilidad',
+        hourly:'Pronóstico por hora', weekly:'Pronóstico 7 días', air:'Calidad del aire', aqi:'ICA',
+        activities:'Guía de actividades', hiking:'Senderismo', photography:'Fotografía', running:'Correr',
+        cycling:'Ciclismo', swimming:'Natación', yoga:'Yoga', fishing:'Pesca', picnic:'Picnic',
+        go:'¡Genial!', avoid:'Evitar', moderate:'Regular', map:'Mapa del clima', details:'Todos los datos',
+        dewPoint:'Punto de rocío', clouds:'Nubes', precip:'Precipitación', gust:'Ráfagas', dir:'Dirección viento',
+        noData:'Sin datos', loading:'Cargando...', planetEarth:'Planeta Tierra',
+        useLocation:'Usar mi ubicación',
+        navNow:'Ahora', navHourly:'Por hora', navWeekly:'7 Días', navAir:'Calidad aire', navActivities:'Actividades',
+        navMap:'Mapa', navDetails:'Detalles', navAlerts:'Alertas', navMarine:'Marino',
+        mapTemp:' Temperatura', mapClouds:' Nubes', mapPrecip:' Precipitación',
+        mapPressure:' Presión', mapWind:' Viento', mapTempLegend:' Frío —  Calor',
+        mapCloudsLegend:' Despejado — Nublado', mapPrecipLegend:' Seco —  Húmedo',
+        mapPressureLegend:' Baja — Alta', mapWindLegend:' Calma — Tormenta',
+        feelTemp:'Sensación', country:'País', coordinates:'Coordenadas',
+        noAlerts:'Sin alertas activas.', tips:' Consejos del clima',
+        windSpeed:'Velocidad viento', marineNote:' Condiciones marinas basadas en datos actuales.',
+        conditions:'Condiciones', highLow:'Máx/Mín',
+        sunriseTime:'Amanecer', sunsetTime:'Atardecer',
+    },
+    de: {
+        search:'Stadt suchen...', feelsLike:'Gefühlt', humidity:'Feuchtigkeit', wind:'Wind', uv:'UV-Index',
+        pressure:'Druck', sunrise:'Sonnenaufgang', sunset:'Sonnenuntergang', moon:'Mond', visibility:'Sichtweite',
+        hourly:'Stündliche Vorhersage', weekly:'7-Tage Vorhersage', air:'Luftqualität', aqi:'AQI',
+        activities:'Aktivitäten Guide', hiking:'Wandern', photography:'Fotografie', running:'Laufen',
+        cycling:'Radfahren', swimming:'Schwimmen', yoga:'Yoga', fishing:'Angeln', picnic:'Picknick',
+        go:'Super!', avoid:'Meiden', moderate:'Mäßig', map:'Wetterkarte', details:'Alle Daten',
+        dewPoint:'Taupunkt', clouds:'Bewölkung', precip:'Niederschlag', gust:'Böen', dir:'Windrichtung',
+        noData:'Keine Daten', loading:'Laden...', planetEarth:'Planet Erde',
+        useLocation:'Mein Standort',
+        navNow:'Jetzt', navHourly:'Stündlich', navWeekly:'7 Tage', navAir:'Luftqualität', navActivities:'Aktivitäten',
+        navMap:'Karte', navDetails:'Details', navAlerts:'Warnungen', navMarine:'Marine',
+        mapTemp:' Temperatur', mapClouds:' Wolken', mapPrecip:' Niederschlag',
+        mapPressure:' Druck', mapWind:' Wind', mapTempLegend:' Kalt —  Heiß',
+        mapCloudsLegend:' Klar — Bewölkt', mapPrecipLegend:' Trocken —  Nass',
+        mapPressureLegend:' Niedrig — Hoch', mapWindLegend:' Ruhig — Stürmisch',
+        feelTemp:'Gefühlt', country:'Land', coordinates:'Koordinaten',
+        noAlerts:'Keine aktiven Wetterwarnungen.', tips:' Wettertipps',
+        windSpeed:'Windgeschw.', marineNote:' Meeresbedingungen basierend auf aktuellen Daten.',
+        conditions:'Bedingungen', highLow:'Hoch/Tief',
+        sunriseTime:'Sonnenaufgang', sunsetTime:'Sonnenuntergang',
+    },
+    it: {
+        search:'Cerca città...', feelsLike:'Percepita', humidity:'Umidità', wind:'Vento', uv:'Indice UV',
+        pressure:'Pressione', sunrise:'Alba', sunset:'Tramonto', moon:'Luna', visibility:'Visibilità',
+        hourly:'Previsioni orarie', weekly:'Previsioni 7 giorni', air:'Qualità aria', aqi:'AQI',
+        activities:'Guida attività', hiking:'Escursionismo', photography:'Fotografia', running:'Corsa',
+        cycling:'Ciclismo', swimming:'Nuoto', yoga:'Yoga', fishing:'Pesca', picnic:'Picnic',
+        go:'Ottimo!', avoid:'Evita', moderate:'Moderato', map:'Mappa meteo', details:'Tutti i dati',
+        dewPoint:'Punto rugiada', clouds:'Nuvole', precip:'Precipitazioni', gust:'Raffiche', dir:'Direzione vento',
+        noData:'Nessun dato', loading:'Caricamento...', planetEarth:'Pianeta Terra',
+        useLocation:'Usa posizione',
+        navNow:'Adesso', navHourly:'Orarie', navWeekly:'7 Giorni', navAir:'Qualità aria', navActivities:'Attività',
+        navMap:'Mappa', navDetails:'Dettagli', navAlerts:'Allerte', navMarine:'Marino',
+        mapTemp:' Temperatura', mapClouds:' Nuvole', mapPrecip:' Precipitazioni',
+        mapPressure:' Pressione', mapWind:' Vento', mapTempLegend:' Freddo —  Caldo',
+        mapCloudsLegend:' Sereno — Nuvoloso', mapPrecipLegend:' Asciutto —  Bagnato',
+        mapPressureLegend:' Bassa — Alta', mapWindLegend:' Calma — Tempesta',
+        feelTemp:'Percepita', country:'Paese', coordinates:'Coordinate',
+        noAlerts:'Nessuna allerta attiva.', tips:' Consigli meteo',
+        windSpeed:'Velocità vento', marineNote:' Condizioni marine basate sui dati attuali.',
+        conditions:'Condizioni', highLow:'Alta/Bassa',
+        sunriseTime:'Alba', sunsetTime:'Tramonto',
+    },
+    pt: {
+        search:'Pesquisar cidade...', feelsLike:'Sensação', humidity:'Umidade', wind:'Vento', uv:'Índice UV',
+        pressure:'Pressão', sunrise:'Nascer', sunset:'Pôr', moon:'Lua', visibility:'Visibilidade',
+        hourly:'Previsão horária', weekly:'Previsão 7 dias', air:'Qualidade do ar', aqi:'IQA',
+        activities:'Guia de atividades', hiking:'Trilha', photography:'Fotografia', running:'Corrida',
+        cycling:'Ciclismo', swimming:'Natação', yoga:'Ioga', fishing:'Pesca', picnic:'Piquenique',
+        go:'Ótimo!', avoid:'Evite', moderate:'Moderado', map:'Mapa do tempo', details:'Todos os dados',
+        dewPoint:'Ponto orvalho', clouds:'Nuvens', precip:'Precipitação', gust:'Rajadas', dir:'Direção vento',
+        noData:'Sem dados', loading:'Carregando...', planetEarth:'Planeta Terra',
+        useLocation:'Usar localização',
+        navNow:'Agora', navHourly:'Horário', navWeekly:'7 Dias', navAir:'Qualidade ar', navActivities:'Atividades',
+        navMap:'Mapa', navDetails:'Detalhes', navAlerts:'Alertas', navMarine:'Marinho',
+        mapTemp:' Temperatura', mapClouds:' Nuvens', mapPrecip:' Precipitação',
+        mapPressure:' Pressão', mapWind:' Vento', mapTempLegend:' Frio —  Quente',
+        mapCloudsLegend:' Claro — Nublado', mapPrecipLegend:' Seco —  Molhado',
+        mapPressureLegend:' Baixa — Alta', mapWindLegend:' Calmo — Tempestade',
+        feelTemp:'Sensação', country:'País', coordinates:'Coordenadas',
+        noAlerts:'Sem alertas ativos.', tips:' Dicas do tempo',
+        windSpeed:'Velocidade vento', marineNote:' Condições marinhas baseadas em dados atuais.',
+        conditions:'Condições', highLow:'Alta/Baixa',
+        sunriseTime:'Nascer', sunsetTime:'Pôr',
+    },
+    ar: {
+        search:'ابحث عن مدينة...', feelsLike:'الشعور', humidity:'الرطوبة', wind:'الرياح', uv:'مؤشر الأشعة',
+        pressure:'الضغط', sunrise:'الشروق', sunset:'الغروب', moon:'القمر', visibility:'الرؤية',
+        hourly:'توقعات كل ساعة', weekly:'توقعات 7 أيام', air:'جودة الهواء', aqi:'مؤشر الجودة',
+        activities:'دليل الأنشطة', hiking:'التنزه', photography:'التصوير', running:'الجري',
+        cycling:'ركوب الدراجات', swimming:'السباحة', yoga:'اليوغا', fishing:'الصيد', picnic:'النزهة',
+        go:'رائع!', avoid:'تجنب', moderate:'متوسط', map:'خريطة الطقس', details:'جميع البيانات',
+        dewPoint:'نقطة الندى', clouds:'الغيوم', precip:'الهطول', gust:'الهبات', dir:'اتجاه الرياح',
+        noData:'لا توجد بيانات', loading:'جار التحميل...', planetEarth:'كوكب الأرض',
+        useLocation:'استخدم موقعي',
+        navNow:'الآن', navHourly:'كل ساعة', navWeekly:'7 أيام', navAir:'جودة الهواء', navActivities:'الأنشطة',
+        navMap:'الخريطة', navDetails:'التفاصيل', navAlerts:'التنبيهات', navMarine:'البحر',
+        mapTemp:' درجة الحرارة', mapClouds:' الغيوم', mapPrecip:' الهطول',
+        mapPressure:' الضغط', mapWind:' الرياح', mapTempLegend:' بارد —  حار',
+        mapCloudsLegend:' صافٍ — غائم', mapPrecipLegend:' جاف —  رطب',
+        mapPressureLegend:' منخفض — مرتفع', mapWindLegend:' هادئ — عاصف',
+        feelTemp:'الشعور', country:'البلد', coordinates:'الإحداثيات',
+        noAlerts:'لا توجد تنبيهات نشطة.', tips:' نصائح الطقس',
+        windSpeed:'سرعة الرياح', marineNote:' الظروف البحرية بناءً على البيانات الحالية.',
+        conditions:'الحالة', highLow:'عالية/منخفضة',
+        sunriseTime:'الشروق', sunsetTime:'الغروب',
+    },
+    ja: {
+        search:'都市を検索...', feelsLike:'体感温度', humidity:'湿度', wind:'風', uv:'紫外線指数',
+        pressure:'気圧', sunrise:'日の出', sunset:'日の入り', moon:'月', visibility:'視程',
+        hourly:'時間ごとの予報', weekly:'7日間予報', air:'大気質', aqi:'大気質指数',
+        activities:'アクティビティガイド', hiking:'ハイキング', photography:'写真撮影', running:'ランニング',
+        cycling:'サイクリング', swimming:'水泳', yoga:'ヨガ', fishing:'釣り', picnic:'ピクニック',
+        go:'良い！', avoid:'避ける', moderate:'普通', map:'天気図', details:'詳細データ',
+        dewPoint:'露点', clouds:'雲量', precip:'降水量', gust:'突風', dir:'風向',
+        noData:'データなし', loading:'読み込み中...', planetEarth:'地球',
+        useLocation:'現在地を使用',
+        navNow:'現在', navHourly:'時間ごと', navWeekly:'7日間', navAir:'大気質', navActivities:'アクティビティ',
+        navMap:'地図', navDetails:'詳細', navAlerts:'警報', navMarine:'海洋',
+        mapTemp:' 気温', mapClouds:' 雲', mapPrecip:' 降水量',
+        mapPressure:' 気圧', mapWind:' 風', mapTempLegend:' 寒い —  暑い',
+        mapCloudsLegend:' 晴れ — 曇り', mapPrecipLegend:' 乾燥 —  雨天',
+        mapPressureLegend:' 低い — 高い', mapWindLegend:' 穏やか — 嵐',
+        feelTemp:'体感温度', country:'国', coordinates:'座標',
+        noAlerts:'アクティブな警報はありません。', tips:' 天気のヒント',
+        windSpeed:'風速', marineNote:' 現在のデータに基づく海況。',
+        conditions:'状態', highLow:'最高/最低',
+        sunriseTime:'日の出', sunsetTime:'日の入り',
+    },
+    zh: {
+        search:'搜索城市...', feelsLike:'体感', humidity:'湿度', wind:'风', uv:'紫外线指数',
+        pressure:'气压', sunrise:'日出', sunset:'日落', moon:'月亮', visibility:'能见度',
+        hourly:'逐时预报', weekly:'7天预报', air:'空气质量', aqi:'AQI',
+        activities:'活动指南', hiking:'徒步', photography:'摄影', running:'跑步',
+        cycling:'骑行', swimming:'游泳', yoga:'瑜伽', fishing:'钓鱼', picnic:'野餐',
+        go:'适合！', avoid:'不宜', moderate:'一般', map:'天气地图', details:'详细数据',
+        dewPoint:'露点', clouds:'云量', precip:'降水', gust:'阵风', dir:'风向',
+        noData:'无数据', loading:'加载中...', planetEarth:'地球',
+        useLocation:'使用我的位置',
+        navNow:'现在', navHourly:'逐时', navWeekly:'7天', navAir:'空气质量', navActivities:'活动',
+        navMap:'地图', navDetails:'详情', navAlerts:'警报', navMarine:'海洋',
+        mapTemp:' 温度', mapClouds:' 云量', mapPrecip:' 降水',
+        mapPressure:' 气压', mapWind:'💨 风', mapTempLegend:' 冷 —  热',
+        mapCloudsLegend:' 晴 — 多云', mapPrecipLegend:' 干燥 —  潮湿',
+        mapPressureLegend:' 低 — 高', mapWindLegend:' 平静 — 风暴',
+        feelTemp:'体感', country:'国家', coordinates:'坐标',
+        noAlerts:'无活跃天气警报。', tips:' 天气提示',
+        windSpeed:'风速', marineNote:' 基于当前数据的海洋条件。',
+        conditions:'状况', highLow:'高/低',
+        sunriseTime:'日出', sunsetTime:'日落',
+    },
+    ru: {
+        search:'Поиск города...', feelsLike:'Ощущается', humidity:'Влажность', wind:'Ветер', uv:'УФ-индекс',
+        pressure:'Давление', sunrise:'Восход', sunset:'Закат', moon:'Луна', visibility:'Видимость',
+        hourly:'Почасовой прогноз', weekly:'Прогноз на 7 дней', air:'Качество воздуха', aqi:'ИКВ',
+        activities:'Гид активностей', hiking:'Поход', photography:'Фото', running:'Бег',
+        cycling:'Велосипед', swimming:'Плавание', yoga:'Йога', fishing:'Рыбалка', picnic:'Пикник',
+        go:'Отлично!', avoid:'Избегать', moderate:'Умеренно', map:'Карта погоды', details:'Все данные',
+        dewPoint:'Точка росы', clouds:'Облачность', precip:'Осадки', gust:'Порывы', dir:'Направление',
+        noData:'Нет данных', loading:'Загрузка...', planetEarth:'Планета Земля',
+        useLocation:'Моё местоположение',
+        navNow:'Сейчас', navHourly:'Почасовой', navWeekly:'7 Дней', navAir:'Качество воздуха', navActivities:'Активности',
+        navMap:'Карта', navDetails:'Детали', navAlerts:'Оповещения', navMarine:'Морской',
+        mapTemp:' Температура', mapClouds:' Облачность', mapPrecip:' Осадки',
+        mapPressure:' Давление', mapWind:' Ветер', mapTempLegend:' Холодно —  Жарко',
+        mapCloudsLegend:' Ясно — Облачно', mapPrecipLegend:' Сухо —  Мокро',
+        mapPressureLegend:' Низкое — Высокое', mapWindLegend:' Штиль — Шторм',
+        feelTemp:'Ощущается', country:'Страна', coordinates:'Координаты',
+        noAlerts:'Нет активных предупреждений.', tips:' Советы по погоде',
+        windSpeed:'Скорость ветра', marineNote:' Морские условия на основе текущих данных.',
+        conditions:'Условия', highLow:'Макс/Мин',
+        sunriseTime:'Восход', sunsetTime:'Закат',
+    },
+    hi: {
+        search:'शहर खोजें...', feelsLike:'अनुभूति', humidity:'आर्द्रता', wind:'हवा', uv:'यूवी सूचकांक',
+        pressure:'दबाव', sunrise:'सूर्योदय', sunset:'सूर्यास्त', moon:'चाँद', visibility:'दृश्यता',
+        hourly:'प्रति घंटा पूर्वानुमान', weekly:'7 दिन का पूर्वानुमान', air:'वायु गुणवत्ता', aqi:'AQI',
+        activities:'गतिविधि गाइड', hiking:'ट्रेकिंग', photography:'फोटोग्राफी', running:'दौड़ना',
+        cycling:'साइकिलिंग', swimming:'तैराकी', yoga:'योग', fishing:'मछली पकड़ना', picnic:'पिकनिक',
+        go:'बढ़िया!', avoid:'बचें', moderate:'ठीक', map:'मौसम मानचित्र', details:'सभी डेटा',
+        dewPoint:'ओस बिंदु', clouds:'बादल', precip:'वर्षा', gust:'झोंके', dir:'हवा की दिशा',
+        noData:'कोई डेटा नहीं', loading:'लोड हो रहा है...', planetEarth:'पृथ्वी ग्रह',
+        useLocation:'मेरा स्थान उपयोग करें',
+        navNow:'अभी', navHourly:'प्रति घंटा', navWeekly:'7 दिन', navAir:'वायु गुणवत्ता', navActivities:'गतिविधियाँ',
+        navMap:'मानचित्र', navDetails:'विवरण', navAlerts:'चेतावनी', navMarine:'समुद्री',
+        mapTemp:' तापमान', mapClouds:' बादल', mapPrecip:' वर्षा',
+        mapPressure:' दबाव', mapWind:' हवा', mapTempLegend:' ठंडा —  गर्म',
+        mapCloudsLegend:' साफ़ — बादल', mapPrecipLegend:' सूखा —  गीला',
+        mapPressureLegend:' निम्न — उच्च', mapWindLegend:' शांत — तूफ़ानी',
+        feelTemp:'अनुभूति', country:'देश', coordinates:'निर्देशांक',
+        noAlerts:'कोई सक्रिय मौसम चेतावनी नहीं।', tips:' मौसम सुझाव',
+        windSpeed:'हवा की गति', marineNote:' वर्तमान डेटा पर आधारित समुद्री स्थितियाँ।',
+        conditions:'स्थितियाँ', highLow:'उच्च/निम्न',
+        sunriseTime:'सूर्योदय', sunsetTime:'सूर्यास्त',
+    }
+};
+
+const API_KEY = "2a9ef6c9943d955fc653a8669c629591";
+let currentLang = 'en';
+let units = 'metric';
+let currentCity = '';
+let currentCoords = null;
+let mapInstance = null;
+let mapMarker = null;
+let currentMapLayer = 'temp';
+let mapTileLayer = null;
+
+const $ = id => document.getElementById(id);
+const cityInput = $('city-input');
+const toastEl = $('toast');
+
+function lang(key) { return T[currentLang]?.[key] || T.en[key] || key; }
+
+function showToast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    setTimeout(() => toastEl.classList.remove('show'), 3000);
+}
+
+function applyLanguage() {
+    // Placeholder
+    cityInput.placeholder = lang('search');
+    
+    // All data-i18n elements
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+        const key = el.dataset.i18n;
+        el.textContent = lang(key);
+    });
+    
+    // data-i18n-placeholder
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+        el.placeholder = lang(el.dataset.i18nPlaceholder);
+    });
+    
+    // data-i18n-title
+    document.querySelectorAll('[data-i18n-title]').forEach(el => {
+        el.title = lang(el.dataset.i18nTitle);
+    });
+    
+    // data-i18n-prefix elements
+    document.querySelectorAll('[data-i18n-prefix]').forEach(el => {
+        const key = el.dataset.i18nPrefix;
+        const suffix = el.textContent.replace(/^[^0-9]*/, '');
+        el.textContent = lang(key) + ' ' + suffix;
+    });
+    
+    // Map legend
+    updateMapLegend(currentMapLayer);
+    
+    // Rerender dynamic content
+    if (currentCity) {
+        // Force re-translate of dynamic content by re-fetching
+        // We'll update the main UI elements dynamically
+    }
+}
+
+// === NAVIGATION ===
+document.querySelectorAll('.nav-item').forEach(item => {
+    item.addEventListener('click', () => {
+        document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+        item.classList.add('active');
+        document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+        const sec = $('sec-' + item.dataset.section);
+        if (sec) sec.classList.add('active');
+        if (window.innerWidth <= 768) $('sidebar').classList.remove('open');
+    });
+});
+$('hamburger').addEventListener('click', () => $('sidebar').classList.toggle('open'));
+
+// === LANG ===
+$('lang-select').addEventListener('change', e => {
+    currentLang = e.target.value;
+    // Set html dir for Arabic
+    document.getElementById('html-tag').dir = currentLang === 'ar' ? 'rtl' : 'ltr';
+    document.getElementById('html-tag').lang = currentLang;
+    applyLanguage();
+    if (currentCity) checkWeather(currentCity);
+});
+
+// === UNITS ===
+document.querySelectorAll('.unit-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.unit-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        units = btn.dataset.unit;
+        if (currentCity) checkWeather(currentCity);
+    });
+});
+
+// ===== PARTICLE BACKGROUND =====
+(function initCanvas() {
+    const canvas = document.getElementById('weather-canvas');
+    const ctx = canvas.getContext('2d');
+    let particles = [];
+    let w, h;
+
+    function resize() { w = canvas.width = window.innerWidth; h = canvas.height = window.innerHeight; }
+    resize();
+    window.addEventListener('resize', resize);
+
+    class Particle {
+        constructor() { this.reset(); }
+        reset() {
+            this.x = Math.random() * w;
+            this.y = Math.random() * h;
+            this.size = Math.random() * 2.5 + 0.5;
+            this.speedX = (Math.random() - 0.5) * 0.3;
+            this.speedY = (Math.random() - 0.5) * 0.3;
+            this.opacity = Math.random() * 0.4 + 0.1;
+        }
+        update() {
+            this.x += this.speedX; this.y += this.speedY;
+            if (this.x < 0 || this.x > w) this.speedX *= -1;
+            if (this.y < 0 || this.y > h) this.speedY *= -1;
+        }
+        draw() {
+            ctx.beginPath(); ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(255, 255, 255, ${this.opacity})`;
+            ctx.fill();
+        }
+    }
+
+    for (let i = 0; i < 80; i++) particles.push(new Particle());
+
+    function animate() {
+        ctx.clearRect(0, 0, w, h);
+        particles.forEach(p => { p.update(); p.draw(); });
+        for (let i = 0; i < particles.length; i++) {
+            for (let j = i + 1; j < particles.length; j++) {
+                const dx = particles[i].x - particles[j].x;
+                const dy = particles[i].y - particles[j].y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist < 120) {
+                    ctx.beginPath(); ctx.moveTo(particles[i].x, particles[i].y);
+                    ctx.lineTo(particles[j].x, particles[j].y);
+                    ctx.strokeStyle = `rgba(255,255,255,${0.06 * (1 - dist / 120)})`;
+                    ctx.lineWidth = 0.5; ctx.stroke();
+                }
+            }
+        }
+        requestAnimationFrame(animate);
+    }
+    animate();
+})();
+
+// ===== MAIN WEATHER FETCH =====
+async function checkWeather(city) {
+    if (!city) return;
+    currentCity = city;
+    try {
+        const currentUrl = `https://api.openweathermap.org/data/2.5/weather?q=${city}&units=${units}&appid=${API_KEY}`;
+        const forecastUrl = `https://api.openweathermap.org/data/2.5/forecast?q=${city}&units=${units}&appid=${API_KEY}`;
+        
+        const [currentRes, forecastRes] = await Promise.all([
+            fetch(currentUrl), fetch(forecastUrl)
+        ]);
+        const currentData = await currentRes.json();
+        const forecastData = await forecastRes.json();
+
+        if (!currentRes.ok) { showToast('City not found ✗'); return; }
+
+        currentCoords = { lat: currentData.coord.lat, lon: currentData.coord.lon };
+
+        updateMainUI(currentData);
+        updateHourlyUI(forecastData);
+        updateWeeklyUI(forecastData);
+        updateDetailsUI(currentData, forecastData);
+        updateActivityUI(currentData);
+        updateAlertsUI(currentData, forecastData);
+        updateMarineUI(currentData);
+        updateMap(currentCoords.lat, currentCoords.lon, currentData.name);
+
+        fetchUV(currentCoords.lat, currentCoords.lon);
+        fetchAirQuality(currentCoords.lat, currentCoords.lon);
+
+        changeDynamicBackground(currentData.weather[0].main, currentData.weather[0].icon);
+        applyLanguage();
+    } catch(e) {
+        showToast('Connection error');
+    }
+}
+
+// ===== GEO LOCATION =====
+$('geo-btn').addEventListener('click', () => {
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(async pos => {
+            const { latitude, longitude } = pos.coords;
+            try {
+                const res = await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${latitude}&lon=${longitude}&units=${units}&appid=${API_KEY}`);
+                const data = await res.json();
+                if (res.ok) {
+                    cityInput.value = data.name;
+                    checkWeather(data.name);
+                }
+            } catch(e) { showToast('Location error'); }
+        }, () => showToast('Location denied'));
+    }
+});
+
+cityInput.addEventListener('keypress', e => { if (e.key === 'Enter' && cityInput.value.trim()) checkWeather(cityInput.value); });
+
+
+// ===== MAIN UI =====
+function updateMainUI(data) {
+    $('city-name').textContent = `${data.name}, ${data.sys.country}`;
+    $('temp').textContent = `${Math.round(data.main.temp)}°`;
+    $('weather-icon').src = `https://openweathermap.org/img/wn/${data.weather[0].icon}@4x.png`;
+    $('description').textContent = data.weather[0].description;
+    $('feels-like').textContent = `${lang('feelsLike')} ${Math.round(data.main.feels_like)}°`;
+    $('humidity').textContent = `${data.main.humidity}%`;
+    $('wind-speed').textContent = `${Math.round(data.wind.speed)} ${units === 'metric' ? 'km/h' : 'mph'}`;
+    $('pressure-hero').textContent = `${data.main.pressure} hPa`;
+    $('visibility-hero').textContent = `${(data.visibility / 1000).toFixed(1)} km`;
+
+    const timeFmt = { hour: '2-digit', minute: '2-digit' };
+    const localeMap = { en:'en-US', ar:'ar-SA', ja:'ja-JP', zh:'zh-CN', hi:'hi-IN', ru:'ru-RU' };
+    const loc = localeMap[currentLang] || 'en-US';
+    $('sunrise').textContent = new Date(data.sys.sunrise * 1000).toLocaleTimeString(loc, timeFmt);
+    $('sunset').textContent = new Date(data.sys.sunset * 1000).toLocaleTimeString(loc, timeFmt);
+    
+    $('moon-phase').textContent = getMoonPhase();
+    
+    // Extra info
+    const dewPoint = data.main.temp - ((100 - data.main.humidity) / 5);
+    $('dew-point').textContent = `${Math.round(dewPoint)}°`;
+    $('clouds-pct').textContent = `${data.clouds?.all || 0}%`;
+    const todayPop = data.pop ? Math.round(data.pop * 100) + '%' : '0%';
+    $('precip-chance').textContent = data.pop ? Math.round(data.pop * 100) + '%' : '0%';
+    $('gust-speed').textContent = data.wind.gust ? `${Math.round(data.wind.gust)} ${units === 'metric' ? 'km/h' : 'mph'}` : '--';
+}
+
+function getMoonPhase() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
+    const day = now.getDate();
+    const c = Math.floor(365.25 * year) + Math.floor(30.6 * month) + day - 694039.09;
+    const phase = (c / 29.53058867) % 1;
+    const phases = ['🌑 New', '🌒 Waxing C', '🌓 First Q', '🌔 Waxing G', '🌕 Full', '🌖 Waning G', '🌗 Last Q', '🌘 Waning C'];
+    return phases[Math.floor(phase * 8)];
+}
+
+// ===== UV =====
+async function fetchUV(lat, lon) {
+    try {
+        const res = await fetch(`https://api.openweathermap.org/data/2.5/uvi?lat=${lat}&lon=${lon}&appid=${API_KEY}`);
+        const data = await res.json();
+        if (res.ok) {
+            const uv = data.value;
+            $('uv-index').textContent = uv.toFixed(1);
+            $('uv-index').style.color = uv > 6 ? '#facc15' : uv > 3 ? '#fb923c' : '#4ade80';
+        }
+    } catch(e) {}
+}
+
+// ===== AIR QUALITY =====
+async function fetchAirQuality(lat, lon) {
+    try {
+        const res = await fetch(`https://api.openweathermap.org/data/2.5/air_pollution?lat=${lat}&lon=${lon}&appid=${API_KEY}`);
+        const data = await res.json();
+        if (res.ok && data.list.length) {
+            const aqi = data.list[0].main.aqi;
+            const comp = data.list[0].components;
+            const levels = ['', 'Good ', 'Fair ', 'Moderate ', 'Poor ', 'Very Poor '];
+            const descs = ['', 'Air quality is satisfactory.', 'Air quality is acceptable.', 'Sensitive groups should reduce outdoor activity.', 'Everyone should reduce outdoor activity.', 'Health alert — everyone affected.'];
+            $('aqi-value').textContent = aqi;
+            $('aqi-level').textContent = levels[aqi] || '--';
+            $('aqi-desc').textContent = descs[aqi] || '--';
+            const circle = $('aqi-circle');
+            circle.style.background = aqi <= 2 ? 'rgba(74,222,128,0.3)' : aqi <= 3 ? 'rgba(250,204,21,0.3)' : aqi <= 4 ? 'rgba(251,146,60,0.3)' : 'rgba(248,113,113,0.3)';
+            circle.style.borderColor = aqi <= 2 ? '#4ade80' : aqi <= 3 ? '#facc15' : aqi <= 4 ? '#fb923c' : '#f87171';
+            
+            $('pm25').textContent = `${comp.pm2_5.toFixed(1)} µg`;
+            $('pm10').textContent = `${comp.pm10.toFixed(1)} µg`;
+            $('no2').textContent = `${comp.no2.toFixed(1)} ppb`;
+            $('so2').textContent = `${comp.so2.toFixed(1)} ppb`;
+            $('o3').textContent = `${comp.o3.toFixed(1)} ppb`;
+            $('co').textContent = `${comp.co.toFixed(1)} ppb`;
+        }
+    } catch(e) {}
+}
+
+// ===== HOURLY =====
+function updateHourlyUI(data) {
+    const container = $('hourly-container');
+    const nextHours = data.list.slice(0, 8);
+    container.innerHTML = nextHours.map(h => {
+        const dt = new Date(h.dt * 1000);
+        return `<div class="hourly-item">
+            <span class="hourly-time">${dt.getHours()}:00</span>
+            <img src="https://openweathermap.org/img/wn/${h.weather[0].icon}.png" width="32" alt="">
+            <span class="hourly-temp">${Math.round(h.main.temp)}°</span>
+            <span class="hourly-pop">${h.pop > 0 ? Math.round(h.pop * 100) + '%' : ''}</span>
+        </div>`;
+    }).join('');
+    setTimeout(() => drawHourlyChart(nextHours), 100);
+}
+
+function drawHourlyChart(data) {
+    const canvas = $('hourly-chart');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    const temps = data.map(d => d.main.temp);
+    const pops = data.map(d => d.pop);
+    const minT = Math.min(...temps) - 2;
+    const maxT = Math.max(...temps) + 2;
+    const range = maxT - minT || 1;
+    const pad = 40;
+    const stepX = (w - pad * 2) / (temps.length - 1);
+
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+    ctx.lineWidth = 2.5;
+    temps.forEach((t, i) => {
+        const x = pad + i * stepX;
+        const y = pad + (maxT - t) / range * (h - pad * 2);
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    ctx.lineTo(pad + (temps.length - 1) * stepX, h - pad);
+    ctx.lineTo(pad, h - pad);
+    ctx.closePath();
+    const grad = ctx.createLinearGradient(0, 0, 0, h);
+    grad.addColorStop(0, 'rgba(255,255,255,0.15)');
+    grad.addColorStop(1, 'rgba(255,255,255,0.01)');
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    temps.forEach((t, i) => {
+        const x = pad + i * stepX;
+        const y = pad + (maxT - t) / range * (h - pad * 2);
+        ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2);
+        ctx.fillStyle = 'white'; ctx.fill();
+        ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 1; ctx.stroke();
+
+        if (pops[i] > 0) {
+            const barH = pops[i] * 30;
+            ctx.fillStyle = `rgba(96, 165, 250, ${pops[i] * 0.5})`;
+            ctx.fillRect(x - 3, h - pad - barH, 6, barH);
+        }
+    });
+
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.font = '10px Inter';
+    data.forEach((d, i) => {
+        const x = pad + i * stepX;
+        ctx.fillText(`${Math.round(temps[i])}°`, x - 8, pad + (maxT - temps[i]) / range * (h - pad * 2) - 12);
+    });
+}
+
+// ===== WEEKLY =====
+function updateWeeklyUI(data) {
+    const container = $('weekly-container');
+    const daily = data.list.filter((item, i, arr) => {
+        if (i === 0) return true;
+        const prev = new Date(arr[i - 1].dt * 1000);
+        const curr = new Date(item.dt * 1000);
+        return prev.getDate() !== curr.getDate();
+    }).slice(0, 7);
+
+    const localeMap = { en:'en-US', ar:'ar-SA', ja:'ja-JP', zh:'zh-CN', hi:'hi-IN', ru:'ru-RU' };
+    const loc = localeMap[currentLang] || 'en-US';
+
+    container.innerHTML = daily.map(d => {
+        const dt = new Date(d.dt * 1000);
+        const dayName = dt.toLocaleDateString(loc, { weekday: 'long' });
+        const dateStr = dt.toLocaleDateString(loc, { month: 'short', day: 'numeric' });
+        return `<div class="weekly-card">
+            <div class="weekly-day">
+                <span class="weekly-name">${dayName}</span>
+                <span class="weekly-date">${dateStr}</span>
+            </div>
+            <img src="https://openweathermap.org/img/wn/${d.weather[0].icon}.png" width="40" alt="">
+            <div class="weekly-temps">
+                <span class="weekly-high">${Math.round(d.main.temp_max)}°</span>
+                <span class="weekly-low">${Math.round(d.main.temp_min)}°</span>
+            </div>
+            <div class="weekly-desc">${d.weather[0].description}</div>
+            <div class="weekly-extra">
+                <span><i data-lucide="droplets" size="12"></i> ${d.main.humidity}%</span>
+                <span><i data-lucide="wind" size="12"></i> ${Math.round(d.wind.speed)} ${units === 'metric' ? 'km/h' : 'mph'}</span>
+                ${d.pop > 0 ? `<span><i data-lucide="umbrella" size="12"></i> ${Math.round(d.pop * 100)}%</span>` : ''}
+            </div>
+        </div>`;
+    }).join('');
+    lucide.createIcons();
+}
+
+// ===== ACTIVITIES =====
+function updateActivityUI(data) {
+    const container = $('activity-container');
+    const temp = data.main.temp;
+    const condition = data.weather[0].main.toLowerCase();
+    const isRaining = condition.includes('rain') || condition.includes('drizzle') || condition.includes('thunder');
+    const isSnow = condition.includes('snow');
+    const wind = data.wind.speed;
+    const humidity = data.main.humidity;
+    const clouds = data.clouds?.all || 0;
+    const tempC = units === 'metric' ? temp : (temp - 32) * 5/9;
+
+    const activities = [
+        { name: lang('hiking'), icon: 'mountain', ok: tempC > 10 && tempC < 30 && !isRaining && wind < 30 && humidity < 80, tip: tempC > 10 && tempC < 30 && !isRaining ? 'Trails open' : 'Check conditions' },
+        { name: lang('photography'), icon: 'camera', ok: !isRaining && wind < 25 && clouds < 90, tip: clouds < 30 ? 'Golden hour ideal' : clouds < 70 ? 'Soft light good' : 'Overcast diffused' },
+        { name: lang('running'), icon: 'timer', ok: tempC > 5 && tempC < 28 && !isRaining && wind < 20 && humidity < 75, tip: tempC > 20 ? 'Stay hydrated' : tempC < 10 ? 'Warm up well' : 'Good conditions' },
+        { name: lang('cycling'), icon: 'bike', ok: tempC > 8 && tempC < 30 && wind < 25 && !isRaining, tip: wind > 20 ? 'Strong winds' : wind > 10 ? 'Breezy ride' : 'Calm roads' },
+        { name: lang('swimming'), icon: 'waves', ok: tempC > 22 && !isRaining && wind < 20 && !isSnow, tip: tempC > 28 ? 'Perfect pool day' : tempC > 22 ? 'Warm enough' : 'Too cold' },
+        { name: lang('yoga'), icon: 'sparkles', ok: !isRaining && wind < 15 && tempC > 10, tip: tempC > 15 ? 'Outdoor yoga great' : 'Indoor better' },
+        { name: lang('fishing'), icon: 'fish', ok: !isRaining && tempC > 8 && wind < 20, tip: humidity > 70 ? 'Fish active' : 'Average conditions' },
+        { name: lang('picnic'), icon: 'utensils-crossed', ok: tempC > 15 && tempC < 32 && !isRaining && wind < 20, tip: clouds > 60 ? 'Bring shade' : 'Sunny and nice' },
+    ];
+
+    container.innerHTML = activities.map(a => {
+        const status = a.ok ? 'good' : 'bad';
+        const statusText = a.ok ? lang('go') : lang('avoid');
+        return `<div class="activity-card ${status}">
+            <div class="activity-icon"><i data-lucide="${a.icon}"></i></div>
+            <div class="activity-info">
+                <strong>${a.name}</strong>
+                <span class="activity-status">${statusText}</span>
+                <span class="activity-tip">${a.tip}</span>
+            </div>
+        </div>`;
+    }).join('');
+    lucide.createIcons();
+
+    const hikeBox = $('hike-photo-box');
+    if (tempC > 5 && !isRaining && !isSnow) {
+        const photoQuery = condition.includes('clear') ? 'sunny+landscape+nature' : condition.includes('cloud') ? 'cloudy+landscape' : condition.includes('rain') ? 'rainy+forest' : 'nature+scenery';
+        hikeBox.style.display = 'block';
+        $('hike-photo').src = `https://source.unsplash.com/600x200/?${photoQuery}&t=${Date.now()}`;
+        $('hike-caption').textContent = ` ${data.name} — ${data.weather[0].description}`;
+    } else {
+        hikeBox.style.display = 'none';
+    }
+}
+
+// ===== ALERTS & TIPS =====
+function updateAlertsUI(data, forecast) {
+    const container = $('alerts-container');
+    const condition = data.weather[0].main.toLowerCase();
+    const temp = data.main.temp;
+    const wind = data.wind.speed;
+    const humidity = data.main.humidity;
+    const tempC = units === 'metric' ? temp : (temp - 32) * 5/9;
+    
+    let alerts = [];
+    if (tempC > 38) alerts.push({ icon:'', text:'Extreme heat warning! Stay hydrated.', severity:'high' });
+    if (tempC < -10) alerts.push({ icon:'', text:'Freeze warning! Protect pipes and pets.', severity:'high' });
+    if (wind > 40) alerts.push({ icon:'', text:'High wind warning! Secure outdoor items.', severity:'high' });
+    if (wind > 25) alerts.push({ icon:'', text:'Wind advisory. Be cautious outdoors.', severity:'moderate' });
+    if (condition.includes('thunder')) alerts.push({ icon:'', text:'Thunderstorm warning! Seek shelter.', severity:'high' });
+    if (condition.includes('rain') && tempC < 0) alerts.push({ icon:'', text:'Freezing rain — roads may be icy!', severity:'high' });
+    if (humidity > 90) alerts.push({ icon:'', text:'Very high humidity — feels muggy.', severity:'low' });
+    if (humidity < 15) alerts.push({ icon:'', text:'Very dry conditions — stay hydrated.', severity:'low' });
+    if (data.visibility < 1000) alerts.push({ icon:'', text:'Low visibility — drive carefully!', severity:'moderate' });
+    if (data.visibility < 500) alerts.push({ icon:'', text:'Dense fog — avoid travel if possible.', severity:'high' });
+
+    if (alerts.length > 0) {
+        container.innerHTML = alerts.map(a => `
+            <div class="alert-item alert-${a.severity}">
+                <span class="alert-icon">${a.icon}</span>
+                <span class="alert-text">${a.text}</span>
+            </div>
+        `).join('');
+    } else {
+        container.innerHTML = `<div class="alert-empty"> ${lang('noAlerts')}</div>`;
+    }
+
+    // Tips
+    const tips = [];
+    if (tempC > 30) tips.push(lang('tips') + ': ' + ' Wear sunscreen and stay in shade.');
+    if (tempC < 5) tips.push(lang('tips') + ': ' + ' Dress in layers — it\'s cold outside.');
+    if (condition.includes('rain')) tips.push(lang('tips') + ': ' + ' Bring an umbrella today.');
+    if (wind > 20) tips.push(lang('tips') + ': ' + ' Hold onto your hat — windy today!');
+    if (humidity > 80) tips.push(lang('tips') + ': ' + ' High humidity — air feels heavy.');
+    if (data.visibility < 3000) tips.push(lang('tips') + ': ' + ' Turn on headlights — reduced visibility.');
+    if (condition.includes('clear') && tempC > 15) tips.push(lang('tips') + ': ' + ' Perfect day for a walk outdoors!');
+    
+    const tipsList = $('tips-list');
+    if (tips.length > 0) {
+        tipsList.innerHTML = tips.map(t => `<li>${t}</li>`).join('');
+    } else {
+        tipsList.innerHTML = `<li> No special tips — enjoy your day!</li>`;
+    }
+}
+
+// ===== MARINE =====
+function updateMarineUI(data) {
+    $('marine-wind').textContent = `${Math.round(data.wind.speed)} ${units === 'metric' ? 'km/h' : 'mph'}`;
+    $('marine-pressure').textContent = `${data.main.pressure} hPa`;
+    $('marine-visibility').textContent = `${(data.visibility / 1000).toFixed(1)} km`;
+    $('marine-humidity').textContent = `${data.main.humidity}%`;
+}
+
+// ===== MAP with weather overlays =====
+function updateMap(lat, lon, name) {
+    if (!mapInstance) {
+        mapInstance = L.map('map', {
+            center: [lat, lon],
+            zoom: 8,
+            zoomControl: true,
+        });
+        
+        // Base dark tile
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '© OpenStreetMap © CARTO',
+            maxZoom: 18,
+        }).addTo(mapInstance);
+    } else {
+        mapInstance.setView([lat, lon], 8);
+    }
+    
+    if (mapMarker) mapInstance.removeLayer(mapMarker);
+    mapMarker = L.marker([lat, lon]).addTo(mapInstance)
+        .bindPopup(`<b>${name}</b><br>${$('description').textContent}`)
+        .openPopup();
+
+    // Add weather overlay
+    updateMapOverlay(currentMapLayer);
+    
+    $('map-coords').textContent = `${lat.toFixed(4)}°N, ${lon.toFixed(4)}°E — ${name}`;
+    setTimeout(() => mapInstance.invalidateSize(), 300);
+}
+
+function getOpenWeatherTileUrl(layer) {
+    const base = `https://tile.openweathermap.org/map/{z}/{x}/{y}.png?appid=${API_KEY}`;
+    const layers = {
+        temp: 'temp_new',
+        clouds: 'clouds_new',
+        precip: 'precipitation_new',
+        pressure: 'pressure_new',
+        wind: 'wind_new',
+    };
+    return base.replace('{z}/{x}/{y}', layers[layer] + '/{z}/{x}/{y}');
+}
+
+function updateMapOverlay(layer) {
+    if (mapTileLayer) {
+        mapInstance.removeLayer(mapTileLayer);
+    }
+    if (!mapInstance) return;
+    
+    const tileUrl = getOpenWeatherTileUrl(layer);
+    mapTileLayer = L.tileLayer(tileUrl, {
+        opacity: 0.6,
+        maxZoom: 18,
+        attribution: '© OpenWeatherMap',
+    }).addTo(mapInstance);
+    
+    updateMapLegend(layer);
+}
+
+function updateMapLegend(layer) {
+    const legends = {
+        temp: lang('mapTempLegend'),
+        clouds: lang('mapCloudsLegend'),
+        precip: lang('mapPrecipLegend'),
+        pressure: lang('mapPressureLegend'),
+        wind: lang('mapWindLegend'),
+    };
+    $('map-legend-label').textContent = legends[layer] || legends.temp;
+}
+
+// Map layer controls
+document.querySelectorAll('.map-layer-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.map-layer-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentMapLayer = btn.dataset.layer;
+        if (currentCoords) updateMapOverlay(currentMapLayer);
+    });
+});
+
+// ===== DETAILS =====
+function updateDetailsUI(data, forecast) {
+    const grid = $('details-grid');
+    const today = forecast.list[0];
+    const details = [
+        { label: lang('feelTemp'), value: `${Math.round(data.main.feels_like)}°`, icon: 'thermometer' },
+        { label: lang('humidity'), value: `${data.main.humidity}%`, icon: 'droplets' },
+        { label: lang('dewPoint'), value: `${Math.round(data.main.temp - ((100 - data.main.humidity) / 5))}°`, icon: 'droplet' },
+        { label: lang('pressure'), value: `${data.main.pressure} hPa`, icon: 'gauge' },
+        { label: lang('wind'), value: `${Math.round(data.wind.speed)} ${units === 'metric' ? 'km/h' : 'mph'}`, icon: 'wind' },
+        { label: lang('gust'), value: data.wind.gust ? `${Math.round(data.wind.gust)} ${units === 'metric' ? 'km/h' : 'mph'}` : '--', icon: 'wind' },
+        { label: lang('dir'), value: getWindDirection(data.wind.deg), icon: 'compass' },
+        { label: lang('clouds'), value: `${data.clouds?.all || 0}%`, icon: 'cloud' },
+        { label: lang('visibility'), value: `${(data.visibility / 1000).toFixed(1)} km`, icon: 'eye' },
+        { label: lang('precip'), value: today?.pop ? `${Math.round(today.pop * 100)}%` : '0%', icon: 'umbrella' },
+        { label: lang('uv'), value: $('uv-index').textContent, icon: 'sun' },
+        { label: lang('sunriseTime'), value: $('sunrise').textContent, icon: 'sunrise' },
+        { label: lang('sunsetTime'), value: $('sunset').textContent, icon: 'sunset' },
+        { label: lang('moon'), value: getMoonPhase(), icon: 'moon' },
+        { label: lang('coordinates'), value: `${data.coord.lat.toFixed(2)}, ${data.coord.lon.toFixed(2)}`, icon: 'map-pin' },
+        { label: lang('country'), value: data.sys.country, icon: 'flag' },
+    ];
+
+    grid.innerHTML = details.map(d => `
+        <div class="detail-item">
+            <div class="detail-label"><i data-lucide="${d.icon}"></i> ${d.label}</div>
+            <div class="detail-value">${d.value}</div>
+        </div>
+    `).join('');
+    lucide.createIcons();
+}
+
+function getWindDirection(deg) {
+    const dirs = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+    return dirs[Math.round(deg / 22.5) % 16];
+}
+
+// ===== BACKGROUND =====
+function changeDynamicBackground(condition, icon) {
+    const body = document.body;
+    const isNight = icon?.includes('n');
+    if (isNight) {
+        body.style.background = 'linear-gradient(135deg, #0c0e1a 0%, #1a1a3e 30%, #2d1b4e 60%, #0c0e1a 100%)';
+    } else {
+        switch(condition.toLowerCase()) {
+            case 'clear': body.style.background = 'linear-gradient(135deg, #0f4c75, #3282b8, #4facfe)'; break;
+            case 'clouds': body.style.background = 'linear-gradient(135deg, #4a4a6a, #6a6a8a, #8a8aaa)'; break;
+            case 'rain':
+            case 'drizzle': body.style.background = 'linear-gradient(135deg, #2a3a4a, #4a5a6a, #5a6a7a)'; break;
+            case 'thunderstorm': body.style.background = 'linear-gradient(135deg, #0a0a1e, #1a1a3e, #0a0a2e)'; break;
+            case 'snow': body.style.background = 'linear-gradient(135deg, #8a9aaa, #b8c6db, #d0d8e8)'; break;
+            case 'mist':
+            case 'fog':
+            case 'haze': body.style.background = 'linear-gradient(135deg, #6a7a8a, #8a9aaa, #9aaaab)'; break;
+            default: body.style.background = 'linear-gradient(135deg, #1a1a3e, #3a3a6e, #4a3a7e)';
+        }
+    }
+}
+
+// ===== INIT =====
+window.addEventListener('DOMContentLoaded', () => {
+    lucide.createIcons();
+    applyLanguage();
+    checkWeather('London');
+});
+
+window.addEventListener('resize', () => {
+    if (mapInstance) setTimeout(() => mapInstance.invalidateSize(), 200);
+});
+
+// ===== EXPOSE =====
+window.checkWeather = checkWeather;
+window.changeBackground = changeDynamicBackground;
+</script>
+</body>
+</html>
